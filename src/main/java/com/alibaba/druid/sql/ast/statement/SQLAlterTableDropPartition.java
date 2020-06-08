@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,27 +18,35 @@ package com.alibaba.druid.sql.ast.statement;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.alibaba.druid.sql.ast.SQLObject;
 import com.alibaba.druid.sql.ast.SQLObjectImpl;
 import com.alibaba.druid.sql.visitor.SQLASTVisitor;
 
 public class SQLAlterTableDropPartition extends SQLObjectImpl implements SQLAlterTableItem {
 
-    private boolean ifNotExists = false;
+    private boolean ifExists = false;
 
     private boolean purge;
 
-    private final List<SQLAssignItem> partition = new ArrayList<SQLAssignItem>(4);
+    private final List<SQLObject> partitions = new ArrayList<SQLObject>(4);
 
-    public List<SQLAssignItem> getPartition() {
-        return partition;
+    public List<SQLObject> getPartitions() {
+        return partitions;
+    }
+    
+    public void addPartition(SQLObject partition) {
+        if (partition != null) {
+            partition.setParent(this);
+        }
+        this.partitions.add(partition);
     }
 
-    public boolean isIfNotExists() {
-        return ifNotExists;
+    public boolean isIfExists() {
+        return ifExists;
     }
 
-    public void setIfNotExists(boolean ifNotExists) {
-        this.ifNotExists = ifNotExists;
+    public void setIfExists(boolean ifExists) {
+        this.ifExists = ifExists;
     }
 
     public boolean isPurge() {
@@ -52,7 +60,7 @@ public class SQLAlterTableDropPartition extends SQLObjectImpl implements SQLAlte
     @Override
     protected void accept0(SQLASTVisitor visitor) {
         if (visitor.visit(this)) {
-            acceptChild(visitor, partition);
+            acceptChild(visitor, partitions);
         }
         visitor.endVisit(this);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,30 +15,27 @@
  */
 package com.alibaba.druid.sql.dialect.postgresql.parser;
 
-import java.util.List;
-
-import com.alibaba.druid.sql.ast.SQLExpr;
-import com.alibaba.druid.sql.ast.SQLSetQuantifier;
+import com.alibaba.druid.sql.ast.*;
 import com.alibaba.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.druid.sql.ast.statement.SQLExprTableSource;
 import com.alibaba.druid.sql.ast.statement.SQLSelectQuery;
 import com.alibaba.druid.sql.ast.statement.SQLSelectQueryBlock;
 import com.alibaba.druid.sql.ast.statement.SQLTableSource;
-import com.alibaba.druid.sql.dialect.postgresql.ast.expr.PGParameter;
 import com.alibaba.druid.sql.dialect.postgresql.ast.stmt.PGFunctionTableSource;
 import com.alibaba.druid.sql.dialect.postgresql.ast.stmt.PGSelectQueryBlock;
 import com.alibaba.druid.sql.dialect.postgresql.ast.stmt.PGSelectQueryBlock.IntoOption;
-import com.alibaba.druid.sql.dialect.postgresql.ast.stmt.PGSelectQueryBlock.PGLimit;
-import com.alibaba.druid.sql.dialect.postgresql.ast.stmt.PGValuesQuery;
-import com.alibaba.druid.sql.parser.ParserException;
-import com.alibaba.druid.sql.parser.SQLExprParser;
-import com.alibaba.druid.sql.parser.SQLSelectParser;
-import com.alibaba.druid.sql.parser.Token;
+import com.alibaba.druid.sql.parser.*;
+
+import java.util.List;
 
 public class PGSelectParser extends SQLSelectParser {
 
     public PGSelectParser(SQLExprParser exprParser){
         super(exprParser);
+    }
+
+    public PGSelectParser(SQLExprParser exprParser, SQLSelectListCache selectListCache){
+        super(exprParser, selectListCache);
     }
 
     public PGSelectParser(String sql){
@@ -50,33 +47,32 @@ public class PGSelectParser extends SQLSelectParser {
     }
 
     @Override
-    public SQLSelectQuery query() {
+    public SQLSelectQuery query(SQLObject parent, boolean acceptUnion) {
         if (lexer.token() == Token.VALUES) {
-            lexer.nextToken();
-            accept(Token.LPAREN);
-            PGValuesQuery valuesQuery = new PGValuesQuery();
-            this.exprParser.exprList(valuesQuery.getValues(), valuesQuery);
-            accept(Token.RPAREN);
-            return queryRest(valuesQuery);
+            return valuesQuery(acceptUnion);
         }
-        
+
         if (lexer.token() == Token.LPAREN) {
             lexer.nextToken();
 
             SQLSelectQuery select = query();
-			if (select instanceof SQLSelectQueryBlock) {
-				((SQLSelectQueryBlock) select).setParenthesized(true);
-			}
+            if (select instanceof SQLSelectQueryBlock) {
+                ((SQLSelectQueryBlock) select).setParenthesized(true);
+            }
             accept(Token.RPAREN);
 
-            return queryRest(select);
+            return queryRest(select, acceptUnion);
         }
-        
+
         PGSelectQueryBlock queryBlock = new PGSelectQueryBlock();
+
+        if (lexer.hasComment() && lexer.isKeepComments()) {
+            queryBlock.addBeforeComment(lexer.readAndResetComments());
+        }
 
         if (lexer.token() == Token.SELECT) {
             lexer.nextToken();
-            
+
             if (lexer.token() == Token.COMMENT) {
                 lexer.nextToken();
             }
@@ -137,30 +133,15 @@ public class PGSelectParser extends SQLSelectParser {
         parseGroupBy(queryBlock);
 
         if (lexer.token() == Token.WINDOW) {
-            lexer.nextToken();
-            PGSelectQueryBlock.WindowClause window = new PGSelectQueryBlock.WindowClause();
-            window.setName(this.expr());
-            accept(Token.AS);
-
-            for (;;) {
-                SQLExpr expr = this.createExprParser().expr();
-                window.getDefinition().add(expr);
-                if (lexer.token() == Token.COMMA) {
-                    lexer.nextToken();
-                    continue;
-                } else {
-                    break;
-                }
-            }
-            queryBlock.setWindow(window);
+            this.parseWindow(queryBlock);
         }
 
         queryBlock.setOrderBy(this.createExprParser().parseOrderBy());
 
         for (;;) {
             if (lexer.token() == Token.LIMIT) {
-                PGLimit limit = new PGLimit();
-                
+                SQLLimit limit = new SQLLimit();
+
                 lexer.nextToken();
                 if (lexer.token() == Token.ALL) {
                     limit.setRowCount(new SQLIdentifierExpr("ALL"));
@@ -168,12 +149,12 @@ public class PGSelectParser extends SQLSelectParser {
                 } else {
                     limit.setRowCount(expr());
                 }
-                
+
                 queryBlock.setLimit(limit);
             } else if (lexer.token() == Token.OFFSET) {
-                PGLimit limit = queryBlock.getLimit();
+                SQLLimit limit = queryBlock.getLimit();
                 if (limit == null) {
-                    limit = new PGLimit();
+                    limit = new SQLLimit();
                     queryBlock.setLimit(limit);
                 }
                 lexer.nextToken();
@@ -197,7 +178,7 @@ public class PGSelectParser extends SQLSelectParser {
             } else if (lexer.token() == Token.NEXT) {
                 fetch.setOption(PGSelectQueryBlock.FetchClause.Option.NEXT);
             } else {
-                throw new ParserException("expect 'FIRST' or 'NEXT'");
+                throw new ParserException("expect 'FIRST' or 'NEXT'. " + lexer.info());
             }
 
             SQLExpr count = expr();
@@ -206,13 +187,13 @@ public class PGSelectParser extends SQLSelectParser {
             if (lexer.token() == Token.ROW || lexer.token() == Token.ROWS) {
                 lexer.nextToken();
             } else {
-                throw new ParserException("expect 'ROW' or 'ROWS'");
+                throw new ParserException("expect 'ROW' or 'ROWS'. " + lexer.info());
             }
 
             if (lexer.token() == Token.ONLY) {
                 lexer.nextToken();
             } else {
-                throw new ParserException("expect 'ONLY'");
+                throw new ParserException("expect 'ONLY'. " + lexer.info());
             }
 
             queryBlock.setFetch(fetch);
@@ -230,7 +211,7 @@ public class PGSelectParser extends SQLSelectParser {
                 forClause.setOption(PGSelectQueryBlock.ForClause.Option.SHARE);
                 lexer.nextToken();
             } else {
-                throw new ParserException("expect 'FIRST' or 'NEXT'");
+                throw new ParserException("expect 'FIRST' or 'NEXT'. " + lexer.info());
             }
 
             if (lexer.token() == Token.OF) {
@@ -254,17 +235,26 @@ public class PGSelectParser extends SQLSelectParser {
             queryBlock.setForClause(forClause);
         }
 
-        return queryRest(queryBlock);
+        return queryRest(queryBlock, acceptUnion);
     }
 
     protected SQLTableSource parseTableSourceRest(SQLTableSource tableSource) {
         if (lexer.token() == Token.AS && tableSource instanceof SQLExprTableSource) {
+            lexer.nextToken();
+
+            String alias = null;
+            if (lexer.token() == Token.IDENTIFIER) {
+                alias = lexer.stringVal();
+                lexer.nextToken();
+            }
+
             if (lexer.token() == Token.LPAREN) {
                 SQLExprTableSource exprTableSource = (SQLExprTableSource) tableSource;
 
-                String alias = this.as();
                 PGFunctionTableSource functionTableSource = new PGFunctionTableSource(exprTableSource.getExpr());
-                functionTableSource.setAlias(alias);
+                if (alias != null) {
+                    functionTableSource.setAlias(alias);
+                }
 
                 lexer.nextToken();
                 parserParameters(functionTableSource.getParameters());
@@ -272,14 +262,18 @@ public class PGSelectParser extends SQLSelectParser {
 
                 return super.parseTableSourceRest(functionTableSource);
             }
+            if (alias != null) {
+                tableSource.setAlias(alias);
+                return super.parseTableSourceRest(tableSource);
+            }
         }
 
         return super.parseTableSourceRest(tableSource);
     }
 
-    private void parserParameters(List<PGParameter> parameters) {
+    private void parserParameters(List<SQLParameter> parameters) {
         for (;;) {
-            PGParameter parameter = new PGParameter();
+            SQLParameter parameter = new SQLParameter();
 
             parameter.setName(this.exprParser.name());
             parameter.setDataType(this.exprParser.parseDataType());

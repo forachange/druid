@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,9 +24,8 @@ import com.alibaba.druid.sql.visitor.SQLASTVisitor;
 
 public abstract class SQLObjectImpl implements SQLObject {
 
-    private SQLObject           parent;
-
-    private Map<String, Object> attributes;
+    protected SQLObject           parent;
+    protected Map<String, Object> attributes;
 
     public SQLObjectImpl(){
     }
@@ -87,6 +86,14 @@ public abstract class SQLObjectImpl implements SQLObject {
         }
 
         return attributes;
+    }
+
+    public boolean containsAttribute(String name) {
+        if (attributes == null) {
+            return false;
+        }
+
+        return attributes.containsKey(name);
     }
 
     public Object getAttribute(String name) {
@@ -168,6 +175,10 @@ public abstract class SQLObjectImpl implements SQLObject {
     
     @SuppressWarnings("unchecked")
     public void addAfterComment(List<String> comments) {
+        if (comments == null) {
+            return;
+        }
+
         if (attributes == null) {
             attributes = new HashMap<String, Object>(1);
         }
@@ -190,7 +201,12 @@ public abstract class SQLObjectImpl implements SQLObject {
     }
     
     public boolean hasBeforeComment() {
-        List<String> comments = getBeforeCommentsDirect();
+        if (attributes == null) {
+            return false;
+        }
+
+        List<String> comments = (List<String>) attributes.get("format.before_comment");
+
         if (comments == null) {
             return false;
         }
@@ -199,11 +215,23 @@ public abstract class SQLObjectImpl implements SQLObject {
     }
     
     public boolean hasAfterComment() {
-        List<String> comments = getAfterCommentsDirect();
+        if (attributes == null) {
+            return false;
+        }
+
+        List<String> comments = (List<String>) attributes.get("format.after_comment");
         if (comments == null) {
             return false;
         }
         
         return !comments.isEmpty();
+    }
+
+    public SQLObject clone() {
+        throw new UnsupportedOperationException(this.getClass().getName());
+    }
+
+    public SQLDataType computeDataType() {
+        return null;
     }
 }
